@@ -16,6 +16,10 @@ A modern, fullstack water management system for users and administrators. PureDr
 
 ---
 
+## Tech Stack
+- **Frontend:** React, Tailwind CSS, React Router
+- **Backend:** Node.js, Express (in-memory data)
+
 ## Getting Started
 
 ### Prerequisites
