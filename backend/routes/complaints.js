@@ -1,112 +1,88 @@
 const express = require('express');
 const router = express.Router();
-const { auditLogs, getNextId } = require('./auditLogsStore');
-const { triggerAfterComplaintInsert, triggerAfterComplaintUpdate, triggerAfterComplaintDelete, triggerEscalateOldComplaints } = require('../utils/triggerFunctions');
-const pool = require('../config/database');
+const Complaint = require('../models/Complaint');
 
-// In-memory complaints data
-let complaints = [
-  {
-    ComplaintID: 1,
-    UserID: 1,
-    Date: '2023-06-01',
-    Type: 'Service',
-    Description: 'No water supply for 2 days',
-    Status: 'Open',
-    Response: ''
-  },
-  {
-    ComplaintID: 2,
-    UserID: 2,
-    Date: '2023-06-02',
-    Type: 'Billing',
-    Description: 'Incorrect bill amount for last month',
-    Status: 'Closed',
-    Response: 'Bill corrected and updated.'
-  },
-  {
-    ComplaintID: 3,
-    UserID: 3,
-    Date: '2023-06-03',
-    Type: 'Quality',
-    Description: 'Water is muddy and smells bad',
-    Status: 'In Progress',
-    Response: 'Inspection scheduled.'
-  }
-];
-let nextId = 4;
-
-// GET /api/complaints - fetch all complaints
+// Get all complaints or by userId
 router.get('/', async (req, res) => {
   try {
-    const [rows] = await pool.query('SELECT * FROM complaints');
-    res.json(rows);
+    const { userId } = req.query;
+    let query = {};
+    if (userId) {
+      query.user = userId;
+    }
+    const complaints = await Complaint.find(query).populate('user', 'name email');
+    res.json(complaints);
   } catch (err) {
     console.error('Error fetching complaints:', err);
     res.status(500).json({ error: 'Failed to fetch complaints' });
   }
 });
 
-// POST /api/complaints - add a new complaint
-router.post('/', async (req, res) => {
+// Get complaint by ID
+router.get('/:id', async (req, res) => {
   try {
-    const { UserID, Date: ComplaintDate, Type, Description, Status, Response } = req.body;
-    if (!UserID || !ComplaintDate || !Type || !Description || !Status) {
-      return res.status(400).json({ error: 'All fields except Response are required' });
+    const complaint = await Complaint.findById(req.params.id).populate('user', 'name email');
+    if (!complaint) {
+      return res.status(404).json({ error: 'Complaint not found' });
     }
-    // Insert into database
-    const [result] = await pool.query(
-      'INSERT INTO complaints (UserID, Date, Type, Description, Status, Response) VALUES (?, ?, ?, ?, ?, ?)',
-      [UserID, ComplaintDate, Type, Description, Status, Response || '']
-    );
-    // Fetch the inserted complaint
-    const [rows] = await pool.query('SELECT * FROM complaints WHERE ComplaintID = ?', [result.insertId]);
-    const newComplaint = rows[0];
-    res.status(201).json(newComplaint);
+    res.json(complaint);
   } catch (err) {
-    console.error('Error adding complaint:', err);
-    res.status(500).json({ error: 'Failed to add complaint' });
+    console.error('Error fetching complaint:', err);
+    res.status(500).json({ error: 'Failed to fetch complaint' });
   }
 });
 
-// PUT /api/complaints/:id - update a complaint
+// Create a new complaint
+router.post('/', async (req, res) => {
+  try {
+    const { user, type, description, status, response, date } = req.body;
+    const complaint = new Complaint({
+      user,
+      type,
+      description,
+      status,
+      response,
+      date
+    });
+    await complaint.save();
+    res.status(201).json({ message: 'Complaint created successfully', complaint });
+  } catch (err) {
+    console.error('Error creating complaint:', err);
+    res.status(500).json({ error: 'Failed to create complaint' });
+  }
+});
+
+// Update a complaint
 router.put('/:id', async (req, res) => {
   try {
-    const id = parseInt(req.params.id);
-    const { UserID, Date: ComplaintDate, Type, Description, Status, Response } = req.body;
-    if (!UserID || !ComplaintDate || !Type || !Description || !Status) {
-      return res.status(400).json({ error: 'All fields except Response are required' });
-    }
-    // Update the complaint in the database
-    const [result] = await pool.query(
-      'UPDATE complaints SET UserID = ?, Date = ?, Type = ?, Description = ?, Status = ?, Response = ? WHERE ComplaintID = ?',
-      [UserID, ComplaintDate, Type, Description, Status, Response || '', id]
+    const { user, type, description, status, response, date } = req.body;
+    const updatedComplaint = await Complaint.findByIdAndUpdate(
+      req.params.id,
+      { user, type, description, status, response, date, updatedAt: Date.now() },
+      { new: true, runValidators: true }
     );
-    if (result.affectedRows === 0) {
+    if (!updatedComplaint) {
       return res.status(404).json({ error: 'Complaint not found' });
     }
-    // Fetch the updated complaint
-    const [rows] = await pool.query('SELECT * FROM complaints WHERE ComplaintID = ?', [id]);
-    res.json(rows[0]);
+    res.json({ message: 'Complaint updated successfully', complaint: updatedComplaint });
   } catch (err) {
     console.error('Error updating complaint:', err);
     res.status(500).json({ error: 'Failed to update complaint' });
   }
 });
 
-// DELETE /api/complaints/:id - delete a complaint
+// Delete a complaint
 router.delete('/:id', async (req, res) => {
   try {
-    const id = parseInt(req.params.id);
-    const [result] = await pool.query('DELETE FROM complaints WHERE ComplaintID = ?', [id]);
-    if (result.affectedRows === 0) {
+    const deletedComplaint = await Complaint.findByIdAndDelete(req.params.id);
+    if (!deletedComplaint) {
       return res.status(404).json({ error: 'Complaint not found' });
     }
-    res.json({ message: 'Complaint deleted' });
+    res.json({ message: 'Complaint deleted successfully' });
   } catch (err) {
     console.error('Error deleting complaint:', err);
     res.status(500).json({ error: 'Failed to delete complaint' });
   }
 });
 
-module.exports = { router, complaints }; 
+module.exports = router; 

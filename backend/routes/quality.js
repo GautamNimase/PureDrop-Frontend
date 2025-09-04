@@ -1,53 +1,67 @@
 const express = require('express');
 const router = express.Router();
-
-// In-memory water quality data (placeholder)
-let quality = [
-  { QualityID: 1, SourceID: 1, Date: '2023-06-01', pH: 7.2, Contaminants: 'None' },
-  { QualityID: 2, SourceID: 2, Date: '2023-06-02', pH: 6.8, Contaminants: 'Lead' },
-  { QualityID: 3, SourceID: 3, Date: '2023-06-03', pH: 7.0, Contaminants: 'None' },
-];
-let nextId = 4;
+const WaterQuality = require('../models/WaterQuality');
 
 // GET /api/quality - fetch all quality records
-router.get('/', (req, res) => {
+router.get('/', async (req, res) => {
+  try {
+    const quality = await WaterQuality.find().populate('source', 'name type');
   res.json(quality);
+  } catch (err) {
+    console.error('Error fetching quality records:', err);
+    res.status(500).json({ error: 'Failed to fetch quality records' });
+  }
 });
 
 // POST /api/quality - add a new quality record
-router.post('/', (req, res) => {
-  const { SourceID, Date, pH, Contaminants } = req.body;
-  if (!SourceID || !Date || pH === undefined || !Contaminants) {
-    return res.status(400).json({ error: 'All fields are required' });
+router.post('/', async (req, res) => {
+  try {
+    const { source, date, ph, contaminants } = req.body;
+    const newQuality = new WaterQuality({
+      source,
+      date,
+      ph,
+      contaminants
+    });
+    await newQuality.save();
+    res.status(201).json(newQuality);
+  } catch (err) {
+    console.error('Error creating quality record:', err);
+    res.status(500).json({ error: 'Failed to create quality record' });
   }
-  const newQuality = {
-    QualityID: nextId++,
-    SourceID: Number(SourceID),
-    Date,
-    pH: Number(pH),
-    Contaminants,
-  };
-  quality.push(newQuality);
-  res.status(201).json(newQuality);
 });
 
 // PUT /api/quality/:id - update a quality record
-router.put('/:id', (req, res) => {
-  const id = parseInt(req.params.id);
-  const idx = quality.findIndex(q => q.QualityID === id);
-  if (idx === -1) return res.status(404).json({ error: 'Quality record not found' });
-  const { SourceID, Date, pH, Contaminants } = req.body;
-  quality[idx] = { QualityID: id, SourceID: Number(SourceID), Date, pH: Number(pH), Contaminants };
-  res.json(quality[idx]);
+router.put('/:id', async (req, res) => {
+  try {
+    const { source, date, ph, contaminants } = req.body;
+    const updatedQuality = await WaterQuality.findByIdAndUpdate(
+      req.params.id,
+      { source, date, ph, contaminants },
+      { new: true, runValidators: true }
+    );
+    if (!updatedQuality) {
+      return res.status(404).json({ error: 'Quality record not found' });
+    }
+    res.json(updatedQuality);
+  } catch (err) {
+    console.error('Error updating quality record:', err);
+    res.status(500).json({ error: 'Failed to update quality record' });
+  }
 });
 
 // DELETE /api/quality/:id - delete a quality record
-router.delete('/:id', (req, res) => {
-  const id = parseInt(req.params.id);
-  const idx = quality.findIndex(q => q.QualityID === id);
-  if (idx === -1) return res.status(404).json({ error: 'Quality record not found' });
-  quality.splice(idx, 1);
+router.delete('/:id', async (req, res) => {
+  try {
+    const deletedQuality = await WaterQuality.findByIdAndDelete(req.params.id);
+    if (!deletedQuality) {
+      return res.status(404).json({ error: 'Quality record not found' });
+    }
   res.json({ message: 'Quality record deleted' });
+  } catch (err) {
+    console.error('Error deleting quality record:', err);
+    res.status(500).json({ error: 'Failed to delete quality record' });
+  }
 });
 
 module.exports = router; 

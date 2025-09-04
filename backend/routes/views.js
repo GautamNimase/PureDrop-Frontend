@@ -1,332 +1,338 @@
 const express = require('express');
 const router = express.Router();
-
-// Import data from other routes
-const { users } = require('./users');
-const { connections } = require('./connections');
-const { readings } = require('./readings');
-const { bills } = require('./bills');
-const { alerts } = require('./alerts');
-const { complaints } = require('./complaints');
+const User = require('../models/User');
+const Connection = require('../models/Connection');
+const Bill = require('../models/Bill');
+const Alert = require('../models/Alert');
+const Complaint = require('../models/Complaint');
+const MeterReading = require('../models/MeterReading');
 
 // 1. User Overview View - user_overview
-// Purpose: Quickly see user info along with their connection status and latest bill
-router.get('/user-overview', (req, res) => {
-  const userOverview = users.map(user => {
-    // Get user's connections
-    const userConnections = connections.filter(c => c.UserID === user.UserID);
-    
-    // Get user's readings through connections
-    const userConnectionIds = userConnections.map(c => c.ConnectionID);
-    const userReadings = readings.filter(r => userConnectionIds.includes(r.ConnectionID));
-    const userReadingIds = userReadings.map(r => r.MeterReadingID);
-    
-    // Get user's bills through readings
-    const userBills = bills.filter(b => userReadingIds.includes(b.MeterReadingID));
-    
-    // Get latest bill (most recent bill date)
-    const latestBill = userBills.length > 0 
-      ? userBills.reduce((latest, bill) => 
-          new Date(bill.BillDate) > new Date(latest.BillDate) ? bill : latest
-        )
-      : null;
-    
-    // Get primary connection (first active connection or first connection)
-    const primaryConnection = userConnections.find(c => c.Status === 'Active') || userConnections[0];
-    
-    return {
-      UserID: user.UserID,
-      Name: user.Name,
-      Email: user.Email,
-      Phone: user.Phone,
-      Address: user.Address,
-      ConnectionType: user.ConnectionType,
-      ConnectionID: primaryConnection ? primaryConnection.ConnectionID : null,
-      ConnectionStatus: primaryConnection ? primaryConnection.Status : null,
-      MeterNumber: primaryConnection ? primaryConnection.MeterNumber : null,
-      LatestBillID: latestBill ? latestBill.BillID : null,
-      LatestBillDate: latestBill ? latestBill.BillDate : null,
-      LatestBillAmount: latestBill ? latestBill.Amount : null,
-      LatestBillStatus: latestBill ? latestBill.PaymentStatus : null,
-      TotalConnections: userConnections.length,
-      ActiveConnections: userConnections.filter(c => c.Status === 'Active').length,
-      TotalBills: userBills.length,
-      UnpaidBills: userBills.filter(b => b.PaymentStatus === 'Unpaid').length
-    };
-  });
-  
-  res.json(userOverview);
+router.get('/user-overview', async (req, res) => {
+  try {
+    const userOverview = await User.aggregate([
+      {
+        $lookup: {
+          from: 'connections',
+          localField: '_id',
+          foreignField: 'user',
+          as: 'connections'
+        }
+      },
+      {
+        $lookup: {
+          from: 'bills',
+          localField: 'connections.meterReading',
+          foreignField: 'meterReading',
+          as: 'bills'
+        }
+      },
+      {
+        $project: {
+          UserID: '$_id',
+          Name: '$full_name',
+          Email: '$email',
+          Phone: '$phone_number',
+          Address: '$address',
+          ConnectionStatus: { $arrayElemAt: ['$connections.status', 0] },
+          MeterNumber: { $arrayElemAt: ['$connections.meterNumber', 0] },
+          LatestBillAmount: { $max: '$bills.amount' },
+          LatestBillDate: { $max: '$bills.billDate' },
+          TotalConnections: { $size: '$connections' },
+          UnpaidBills: {
+            $size: {
+              $filter: {
+                input: '$bills',
+                as: 'bill',
+                cond: { $eq: ['$$bill.paymentStatus', 'Unpaid'] }
+              }
+            }
+          }
+        }
+      }
+    ]);
+    res.json(userOverview);
+  } catch (err) {
+    console.error('Error fetching user overview:', err);
+    res.status(500).json({ error: 'Failed to fetch user overview' });
+  }
 });
 
 // 2. Outstanding Bills View - outstanding_bills
-// Purpose: List all unpaid bills with user and connection info
-router.get('/outstanding-bills', (req, res) => {
-  const outstandingBills = bills
-    .filter(bill => bill.PaymentStatus === 'Unpaid')
-    .map(bill => {
-      // Find the meter reading for this bill
-      const meterReading = readings.find(r => r.MeterReadingID === bill.MeterReadingID);
-      
-      if (!meterReading) {
-        return {
-          BillID: bill.BillID,
-          BillDate: bill.BillDate,
-          Amount: bill.Amount,
-          PaymentStatus: bill.PaymentStatus,
-          Error: 'Meter reading not found'
-        };
+router.get('/outstanding-bills', async (req, res) => {
+  try {
+    const outstandingBills = await Bill.aggregate([
+      {
+        $match: { paymentStatus: 'Unpaid' }
+      },
+      {
+        $lookup: {
+          from: 'meterreadings',
+          localField: 'meterReading',
+          foreignField: '_id',
+          as: 'meterReading'
+        }
+      },
+      { $unwind: '$meterReading' },
+      {
+        $lookup: {
+          from: 'connections',
+          localField: 'meterReading.connection',
+          foreignField: '_id',
+          as: 'connection'
+        }
+      },
+      { $unwind: '$connection' },
+      {
+        $lookup: {
+          from: 'users',
+          localField: 'connection.user',
+          foreignField: '_id',
+          as: 'user'
+        }
+      },
+      { $unwind: '$user' },
+      {
+        $project: {
+          BillID: '$_id',
+          BillDate: '$billDate',
+          Amount: '$amount',
+          PaymentStatus: '$paymentStatus',
+          UserID: '$user._id',
+          Name: '$user.full_name',
+          Email: '$user.email',
+          ConnectionID: '$connection._id',
+          MeterNumber: '$connection.meterNumber',
+          UnitsConsumed: '$meterReading.unitsConsumed',
+          ReadingDate: '$meterReading.readingDate'
+        }
       }
-      
-      // Find the connection for this meter reading
-      const connection = connections.find(c => c.ConnectionID === meterReading.ConnectionID);
-      
-      if (!connection) {
-        return {
-          BillID: bill.BillID,
-          BillDate: bill.BillDate,
-          Amount: bill.Amount,
-          PaymentStatus: bill.PaymentStatus,
-          Error: 'Connection not found'
-        };
-      }
-      
-      // Find the user for this connection
-      const user = users.find(u => u.UserID === connection.UserID);
-      
-      if (!user) {
-        return {
-          BillID: bill.BillID,
-          BillDate: bill.BillDate,
-          Amount: bill.Amount,
-          PaymentStatus: bill.PaymentStatus,
-          Error: 'User not found'
-        };
-      }
-      
-      return {
-        BillID: bill.BillID,
-        BillDate: bill.BillDate,
-        Amount: bill.Amount,
-        PaymentStatus: bill.PaymentStatus,
-        UserID: user.UserID,
-        Name: user.Name,
-        Email: user.Email,
-        ConnectionID: connection.ConnectionID,
-        MeterNumber: connection.MeterNumber,
-        UnitsConsumed: meterReading.UnitsConsumed,
-        ReadingDate: meterReading.ReadingDate
-      };
-    });
-  
-  res.json(outstandingBills);
+    ]);
+    res.json(outstandingBills);
+  } catch (err) {
+    console.error('Error fetching outstanding bills:', err);
+    res.status(500).json({ error: 'Failed to fetch outstanding bills' });
+  }
 });
 
 // 3. High Consumption Alerts View - high_consumption_alerts
-// Purpose: Show all high consumption alerts with user and connection info
-router.get('/high-consumption-alerts', (req, res) => {
-  const highConsumptionAlerts = alerts
-    .filter(alert => alert.Type === 'High Consumption')
-    .map(alert => {
-      // Find the user for this alert
-      const user = users.find(u => u.UserID === alert.UserID);
-      
-      if (!user) {
-        return {
-          AlertID: alert.AlertID,
-          Type: alert.Type,
-          Message: alert.Message,
-          Status: alert.Status,
-          Timestamp: alert.Timestamp,
-          Error: 'User not found'
-        };
+router.get('/high-consumption-alerts', async (req, res) => {
+  try {
+    const highConsumptionAlerts = await Alert.aggregate([
+      {
+        $match: { type: 'High Consumption' }
+      },
+      {
+        $lookup: {
+          from: 'users',
+          localField: 'user',
+          foreignField: '_id',
+          as: 'user'
+        }
+      },
+      { $unwind: '$user' },
+      {
+        $lookup: {
+          from: 'connections',
+          localField: 'user._id',
+          foreignField: 'user',
+          as: 'connections'
+        }
+      },
+      {
+        $project: {
+          AlertID: '$_id',
+          Type: '$type',
+          Message: '$message',
+          Status: '$status',
+          Timestamp: '$createdAt',
+          UserID: '$user._id',
+          Name: '$user.full_name',
+          TotalConnections: { $size: '$connections' },
+        }
       }
-      
-      // Find user's connections
-      const userConnections = connections.filter(c => c.UserID === user.UserID);
-      
-      return {
-        AlertID: alert.AlertID,
-        Type: alert.Type,
-        Message: alert.Message,
-        Status: alert.Status,
-        Timestamp: alert.Timestamp,
-        UserID: user.UserID,
-        Name: user.Name,
-        ConnectionID: userConnections.length > 0 ? userConnections[0].ConnectionID : null,
-        MeterNumber: userConnections.length > 0 ? userConnections[0].MeterNumber : null,
-        TotalConnections: userConnections.length,
-        ActiveConnections: userConnections.filter(c => c.Status === 'Active').length
-      };
-    });
-  
-  res.json(highConsumptionAlerts);
+    ]);
+    res.json(highConsumptionAlerts);
+  } catch (err) {
+    console.error('Error fetching high consumption alerts:', err);
+    res.status(500).json({ error: 'Failed to fetch high consumption alerts' });
+  }
 });
 
 // 4. User Complaints View - user_complaints
-// Purpose: List all complaints with user info and status
-router.get('/user-complaints', (req, res) => {
-  const userComplaints = complaints.map(complaint => {
-    // Find the user for this complaint
-    const user = users.find(u => u.UserID === complaint.UserID);
-    
-    if (!user) {
-      return {
-        ComplaintID: complaint.ComplaintID,
-        Message: complaint.Description,
-        Status: complaint.Status,
-        Timestamp: complaint.Date,
-        Error: 'User not found'
-      };
-    }
-    
-    return {
-      ComplaintID: complaint.ComplaintID,
-      Message: complaint.Description,
-      Status: complaint.Status,
-      Timestamp: complaint.Date,
-      UserID: user.UserID,
-      Name: user.Name,
-      Email: user.Email,
-      Phone: user.Phone,
-      Address: user.Address,
-      Response: complaint.Response || '',
-      Type: complaint.Type
-    };
-  });
-  
-  res.json(userComplaints);
+router.get('/user-complaints', async (req, res) => {
+  try {
+    const userComplaints = await Complaint.aggregate([
+      {
+        $lookup: {
+          from: 'users',
+          localField: 'user',
+          foreignField: '_id',
+          as: 'user'
+        }
+      },
+      { $unwind: '$user' },
+      {
+        $project: {
+          ComplaintID: '$_id',
+          Message: '$description',
+          Status: '$status',
+          Timestamp: '$date',
+          UserID: '$user._id',
+          Name: '$user.full_name',
+          Email: '$user.email',
+          Phone: '$user.phone_number',
+          Address: '$user.address',
+          Response: '$response',
+          Type: '$type'
+        }
+      }
+    ]);
+    res.json(userComplaints);
+  } catch (err) {
+    console.error('Error fetching user complaints:', err);
+    res.status(500).json({ error: 'Failed to fetch user complaints' });
+  }
 });
 
 // 5. Connection Meter Readings View - connection_meter_readings
-// Purpose: Show all meter readings with user and connection info
-router.get('/connection-meter-readings', (req, res) => {
-  const connectionMeterReadings = readings.map(reading => {
-    // Find the connection for this reading
-    const connection = connections.find(c => c.ConnectionID === reading.ConnectionID);
-    
-    if (!connection) {
-      return {
-        MeterReadingID: reading.MeterReadingID,
-        ReadingDate: reading.ReadingDate,
-        UnitsConsumed: reading.UnitsConsumed,
-        Error: 'Connection not found'
-      };
-    }
-    
-    // Find the user for this connection
-    const user = users.find(u => u.UserID === connection.UserID);
-    
-    if (!user) {
-      return {
-        MeterReadingID: reading.MeterReadingID,
-        ReadingDate: reading.ReadingDate,
-        UnitsConsumed: reading.UnitsConsumed,
-        ConnectionID: connection.ConnectionID,
-        MeterNumber: connection.MeterNumber,
-        Error: 'User not found'
-      };
-    }
-    
-    return {
-      MeterReadingID: reading.MeterReadingID,
-      ReadingDate: reading.ReadingDate,
-      UnitsConsumed: reading.UnitsConsumed,
-      ConnectionID: connection.ConnectionID,
-      MeterNumber: connection.MeterNumber,
-      UserID: user.UserID,
-      Name: user.Name,
-      Email: user.Email,
-      ConnectionStatus: connection.Status,
-      ConnectionDate: connection.ConnectionDate,
-      SourceID: connection.SourceID
-    };
-  });
-  
-  res.json(connectionMeterReadings);
+router.get('/connection-meter-readings', async (req, res) => {
+  try {
+    const connectionMeterReadings = await MeterReading.aggregate([
+      {
+        $lookup: {
+          from: 'connections',
+          localField: 'connection',
+          foreignField: '_id',
+          as: 'connection'
+        }
+      },
+      { $unwind: '$connection' },
+      {
+        $lookup: {
+          from: 'users',
+          localField: 'connection.user',
+          foreignField: '_id',
+          as: 'user'
+        }
+      },
+      { $unwind: '$user' },
+      {
+        $project: {
+          MeterReadingID: '$_id',
+          ReadingDate: '$readingDate',
+          UnitsConsumed: '$unitsConsumed',
+          ConnectionID: '$connection._id',
+          MeterNumber: '$connection.meterNumber',
+          UserID: '$user._id',
+          Name: '$user.full_name',
+          Email: '$user.email',
+          ConnectionStatus: '$connection.status',
+          ConnectionDate: '$connection.connectionDate',
+          SourceID: '$connection.source'
+        }
+      }
+    ]);
+    res.json(connectionMeterReadings);
+  } catch (err) {
+    console.error('Error fetching connection meter readings:', err);
+    res.status(500).json({ error: 'Failed to fetch connection meter readings' });
+  }
 });
 
 // Additional view: Bill Payment History
-router.get('/bill-payment-history', (req, res) => {
-  const billPaymentHistory = bills.map(bill => {
-    // Find the meter reading for this bill
-    const meterReading = readings.find(r => r.MeterReadingID === bill.MeterReadingID);
-    
-    if (!meterReading) {
-      return {
-        BillID: bill.BillID,
-        BillDate: bill.BillDate,
-        Amount: bill.Amount,
-        PaymentStatus: bill.PaymentStatus,
-        Error: 'Meter reading not found'
-      };
-    }
-    
-    // Find the connection for this meter reading
-    const connection = connections.find(c => c.ConnectionID === meterReading.ConnectionID);
-    
-    if (!connection) {
-      return {
-        BillID: bill.BillID,
-        BillDate: bill.BillDate,
-        Amount: bill.Amount,
-        PaymentStatus: bill.PaymentStatus,
-        Error: 'Connection not found'
-      };
-    }
-    
-    // Find the user for this connection
-    const user = users.find(u => u.UserID === connection.UserID);
-    
-    if (!user) {
-      return {
-        BillID: bill.BillID,
-        BillDate: bill.BillDate,
-        Amount: bill.Amount,
-        PaymentStatus: bill.PaymentStatus,
-        Error: 'User not found'
-      };
-    }
-    
-    return {
-      BillID: bill.BillID,
-      BillDate: bill.BillDate,
-      Amount: bill.Amount,
-      PaymentStatus: bill.PaymentStatus,
-      PaymentDate: bill.PaymentDate || null,
-      PaymentMethod: bill.PaymentMethod || null,
-      UserID: user.UserID,
-      Name: user.Name,
-      Email: user.Email,
-      ConnectionID: connection.ConnectionID,
-      MeterNumber: connection.MeterNumber,
-      UnitsConsumed: meterReading.UnitsConsumed,
-      ReadingDate: meterReading.ReadingDate
-    };
-  });
-  
-  res.json(billPaymentHistory);
+router.get('/bill-payment-history', async (req, res) => {
+  try {
+    const billPaymentHistory = await Bill.aggregate([
+      {
+        $lookup: {
+          from: 'meterreadings',
+          localField: 'meterReading',
+          foreignField: '_id',
+          as: 'meterReading'
+        }
+      },
+      { $unwind: '$meterReading' },
+      {
+        $lookup: {
+          from: 'connections',
+          localField: 'meterReading.connection',
+          foreignField: '_id',
+          as: 'connection'
+        }
+      },
+      { $unwind: '$connection' },
+      {
+        $lookup: {
+          from: 'users',
+          localField: 'connection.user',
+          foreignField: '_id',
+          as: 'user'
+        }
+      },
+      { $unwind: '$user' },
+      {
+        $project: {
+          BillID: '$_id',
+          BillDate: '$billDate',
+          Amount: '$amount',
+          PaymentStatus: '$paymentStatus',
+          PaymentDate: '$paymentDate',
+          PaymentMethod: '$paymentMethod',
+          UserID: '$user._id',
+          Name: '$user.full_name',
+          Email: '$user.email',
+          ConnectionID: '$connection._id',
+          MeterNumber: '$connection.meterNumber',
+          UnitsConsumed: '$meterReading.unitsConsumed',
+          ReadingDate: '$meterReading.readingDate'
+        }
+      }
+    ]);
+    res.json(billPaymentHistory);
+  } catch (err) {
+    console.error('Error fetching bill payment history:', err);
+    res.status(500).json({ error: 'Failed to fetch bill payment history' });
+  }
 });
 
 // Additional view: System Alerts Summary
-router.get('/system-alerts-summary', (req, res) => {
-  const systemAlertsSummary = alerts.map(alert => {
-    // Find the user for this alert
-    const user = alert.UserID ? users.find(u => u.UserID === alert.UserID) : null;
-    
-    return {
-      AlertID: alert.AlertID,
-      Type: alert.Type,
-      Message: alert.Message,
-      Status: alert.Status,
-      Timestamp: alert.Timestamp,
-      UserID: alert.UserID,
-      UserName: user ? user.Name : null,
-      UserEmail: user ? user.Email : null,
-      Severity: alert.Severity || 'Medium'
-    };
-  });
-  
-  res.json(systemAlertsSummary);
+router.get('/system-alerts-summary', async (req, res) => {
+  try {
+    const systemAlertsSummary = await Alert.aggregate([
+      {
+        $lookup: {
+          from: 'users',
+          localField: 'user',
+          foreignField: '_id',
+          as: 'user'
+        }
+      },
+      {
+        $unwind: {
+          path: '$user',
+          preserveNullAndEmptyArrays: true
+        }
+      },
+      {
+        $project: {
+          AlertID: '$_id',
+          Type: '$type',
+          Message: '$message',
+          Status: '$status',
+          Timestamp: '$createdAt',
+          UserID: '$user._id',
+          UserName: '$user.full_name',
+          UserEmail: '$user.email',
+          Severity: '$severity'
+        }
+      }
+    ]);
+    res.json(systemAlertsSummary);
+  } catch (err) {
+    console.error('Error fetching system alerts summary:', err);
+    res.status(500).json({ error: 'Failed to fetch system alerts summary' });
+  }
 });
 
-module.exports = { router }; 
+module.exports = router; 

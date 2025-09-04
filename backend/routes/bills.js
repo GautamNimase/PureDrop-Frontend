@@ -1,201 +1,201 @@
 const express = require('express');
 const router = express.Router();
-const { auditLogs, getNextId } = require('./auditLogsStore');
-const { readings } = require('./readings');
-const { connections } = require('./connections');
-const { calculateBillFromReading, calculateOverdueDays, isOverdue, getUserOutstandingAmount } = require('../utils/billingFunctions');
-const { validateBillData } = require('../utils/validationFunctions');
-const { triggerAfterBillInsert, triggerAfterBillUpdate, triggerAfterBillDelete } = require('../utils/triggerFunctions');
-const pool = require('../config/database');
+const Bill = require('../models/Bill');
+const MeterReading = require('../models/MeterReading');
+const Connection = require('../models/Connection');
+const mongoose = require('mongoose');
 
-// In-memory bills data (placeholder)
-let bills = [
-  { BillID: 1, BillDate: '2023-04-01', Amount: 250, PaymentStatus: 'Paid', MeterReadingID: 1 },
-  { BillID: 2, BillDate: '2023-04-02', Amount: 180, PaymentStatus: 'Unpaid', MeterReadingID: 2 },
-];
-let nextId = 3;
-
-// GET /api/bills - fetch all bills or by userId
+// Get all bills or by userId
 router.get('/', async (req, res) => {
   try {
     const { userId } = req.query;
-    let billsQuery = '';
-    let params = [];
+    let query = {};
+    
     if (userId) {
-      // Fetch bills for a specific user by joining connections, readings, and bills
-      billsQuery = `
-        SELECT b.*, r.ConnectionID, c.UserID
-        FROM bills b
-        JOIN meter_readings r ON b.MeterReadingID = r.MeterReadingID
-        JOIN connections c ON r.ConnectionID = c.ConnectionID
-        WHERE c.UserID = ?
-      `;
-      params = [userId];
-    } else {
-      // Fetch all bills with related info
-      billsQuery = `
-        SELECT b.*, r.ConnectionID, c.UserID
-        FROM bills b
-        JOIN meter_readings r ON b.MeterReadingID = r.MeterReadingID
-        JOIN connections c ON r.ConnectionID = c.ConnectionID
-      `;
+      // Validate if userId is a valid ObjectId
+      if (!mongoose.Types.ObjectId.isValid(userId)) {
+        return res.status(400).json({ error: 'Invalid user ID format' });
+      }
+      
+      // Find all connections for this user
+      const userConnections = await Connection.find({ UserID: userId }).select('_id');
+      const connectionIds = userConnections.map(c => c._id);
+      
+      // Find all meter readings for these connections
+      const readings = await MeterReading.find({ ConnectionID: { $in: connectionIds } }).select('_id');
+      const readingIds = readings.map(r => r._id);
+      
+      query.MeterReadingID = { $in: readingIds };
     }
-    const [rows] = await pool.query(billsQuery, params);
-    // Add calculated fields
-    const billsWithCalculations = rows.map(bill => ({
-      ...bill,
-      overdueDays: calculateOverdueDays(bill.BillDate, bill.PaymentStatus),
-      isOverdue: isOverdue(bill.BillDate, bill.PaymentStatus)
-    }));
-    res.json(billsWithCalculations);
+    
+    const bills = await Bill.find(query)
+      .populate({ 
+        path: 'MeterReadingID', 
+        populate: { 
+          path: 'ConnectionID', 
+          select: 'MeterNumber UserID', 
+          populate: { 
+            path: 'UserID', 
+            select: 'Name Email' 
+          } 
+        } 
+      });
+    res.json(bills);
   } catch (err) {
     console.error('Error fetching bills:', err);
     res.status(500).json({ error: 'Failed to fetch bills' });
   }
 });
 
-// GET /api/bills/outstanding/:userId - get outstanding amount for user
-router.get('/outstanding/:userId', async (req, res) => {
+// Get bill by ID
+router.get('/:id', async (req, res) => {
   try {
-    const userId = parseInt(req.params.userId);
-    // Find all bills for this user (join connections, meter_readings, bills)
-    const [rows] = await pool.query(`
-      SELECT b.*
-      FROM bills b
-      JOIN meter_readings r ON b.MeterReadingID = r.MeterReadingID
-      JOIN connections c ON r.ConnectionID = c.ConnectionID
-      WHERE c.UserID = ?
-    `, [userId]);
-    // Calculate outstanding amount and bill count
-    const outstandingBills = rows.filter(b => b.PaymentStatus === 'Unpaid' || b.PaymentStatus === 'Overdue');
-    const outstandingAmount = outstandingBills.reduce((sum, b) => sum + (b.Amount || 0), 0);
-    res.json({
-      userId,
-      outstandingAmount,
-      billCount: outstandingBills.length
-    });
+    if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+      return res.status(400).json({ error: 'Invalid bill ID format' });
+    }
+    
+    const bill = await Bill.findById(req.params.id)
+      .populate({ 
+        path: 'MeterReadingID', 
+        populate: { 
+          path: 'ConnectionID', 
+          select: 'MeterNumber UserID', 
+          populate: { 
+            path: 'UserID', 
+            select: 'Name Email' 
+          } 
+        } 
+      });
+    if (!bill) {
+      return res.status(404).json({ error: 'Bill not found' });
+    }
+    res.json(bill);
   } catch (err) {
-    console.error('Error fetching outstanding bills:', err);
-    res.status(500).json({ error: 'Failed to fetch outstanding bills' });
+    console.error('Error fetching bill:', err);
+    res.status(500).json({ error: 'Failed to fetch bill' });
   }
 });
 
-// POST /api/bills - add a new bill
+// Create a new bill
 router.post('/', async (req, res) => {
   try {
-    const { BillDate, Amount, PaymentStatus, MeterReadingID } = req.body;
-    // Validate input data
-    const validationErrors = validateBillData({ BillDate, Amount, PaymentStatus, MeterReadingID });
-    if (Object.keys(validationErrors).length > 0) {
-      return res.status(400).json({ error: 'Validation failed', details: validationErrors });
-    }
-    // Calculate amount if not provided
-    let calculatedAmount = Amount;
-    if ((!Amount || Amount === 0) && MeterReadingID) {
-      // You may want to implement this with a stored procedure or JS logic
-      // For now, fallback to 0 if not provided
-      calculatedAmount = 0;
-    }
-    // Insert into database
-    const [result] = await pool.query(
-      'INSERT INTO bills (BillDate, Amount, PaymentStatus, MeterReadingID) VALUES (?, ?, ?, ?)',
-      [BillDate, calculatedAmount, PaymentStatus, MeterReadingID]
-    );
-    // Fetch the inserted bill
-    const [rows] = await pool.query('SELECT * FROM bills WHERE BillID = ?', [result.insertId]);
-    const newBill = rows[0];
-    res.status(201).json(newBill);
-  } catch (err) {
-    console.error('Error adding bill:', err);
-    res.status(500).json({ error: 'Failed to add bill' });
-  }
-});
-
-// POST /api/bills/process-payment - sp_ProcessPayment implementation
-router.post('/process-payment', async (req, res) => {
-  try {
-    const { BillID, PaymentAmount, PaymentMethod } = req.body;
-    if (!BillID || !PaymentAmount || !PaymentMethod) {
-      return res.status(400).json({ error: 'BillID, PaymentAmount, and PaymentMethod are required' });
-    }
-    // Fetch the bill
-    const [billRows] = await pool.query('SELECT * FROM bills WHERE BillID = ?', [BillID]);
-    if (billRows.length === 0) {
-      return res.status(404).json({ error: 'Bill not found' });
-    }
-    const bill = billRows[0];
-    if (PaymentAmount < bill.Amount) {
-      return res.status(400).json({
-        error: 'Payment amount is less than bill amount',
-        required: bill.Amount,
-        provided: PaymentAmount
-      });
-    }
-    // Update the bill as paid
-    const paymentDate = new Date().toISOString().slice(0, 19).replace('T', ' ');
-    await pool.query(
-      'UPDATE bills SET PaymentStatus = ?, PaymentDate = ?, PaymentMethod = ? WHERE BillID = ?',
-      ['Paid', paymentDate, PaymentMethod, BillID]
-    );
-    // Fetch the updated bill
-    const [updatedRows] = await pool.query('SELECT * FROM bills WHERE BillID = ?', [BillID]);
-    res.json({
-      success: true,
-      message: 'Payment processed successfully',
-      bill: updatedRows[0]
+    const { MeterReadingID, BillDate, Amount, PaymentStatus, PaymentDate, PaymentMethod } = req.body;
+    const bill = new Bill({
+      MeterReadingID,
+      BillDate,
+      Amount,
+      PaymentStatus,
+      PaymentDate,
+      PaymentMethod
     });
+    await bill.save();
+    res.status(201).json({ message: 'Bill created successfully', bill });
   } catch (err) {
-    console.error('Error processing payment:', err);
-    res.status(500).json({ error: 'Failed to process payment' });
+    console.error('Error creating bill:', err);
+    res.status(500).json({ error: 'Failed to create bill' });
   }
 });
 
-// PUT /api/bills/:id - update a bill
+// Update a bill
 router.put('/:id', async (req, res) => {
   try {
-    const id = parseInt(req.params.id);
-    const { BillDate, Amount, PaymentStatus, MeterReadingID } = req.body;
-    // Validate input data
-    const validationErrors = validateBillData({ BillDate, Amount, PaymentStatus, MeterReadingID });
-    if (Object.keys(validationErrors).length > 0) {
-      return res.status(400).json({ error: 'Validation failed', details: validationErrors });
+    if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+      return res.status(400).json({ error: 'Invalid bill ID format' });
     }
-    // Calculate amount if needed
-    let calculatedAmount = Amount;
-    if ((!Amount || Amount === 0) && MeterReadingID) {
-      calculatedAmount = 0;
-    }
-    // Update the bill in the database
-    const [result] = await pool.query(
-      'UPDATE bills SET BillDate = ?, Amount = ?, PaymentStatus = ?, MeterReadingID = ? WHERE BillID = ?',
-      [BillDate, calculatedAmount, PaymentStatus, MeterReadingID, id]
+    
+    const { MeterReadingID, BillDate, Amount, PaymentStatus, PaymentDate, PaymentMethod } = req.body;
+    const updatedBill = await Bill.findByIdAndUpdate(
+      req.params.id,
+      { MeterReadingID, BillDate, Amount, PaymentStatus, PaymentDate, PaymentMethod, UpdatedAt: Date.now() },
+      { new: true, runValidators: true }
     );
-    if (result.affectedRows === 0) {
+    if (!updatedBill) {
       return res.status(404).json({ error: 'Bill not found' });
     }
-    // Fetch the updated bill
-    const [rows] = await pool.query('SELECT * FROM bills WHERE BillID = ?', [id]);
-    const updatedBill = rows[0];
-    res.json(updatedBill);
+    res.json({ message: 'Bill updated successfully', bill: updatedBill });
   } catch (err) {
     console.error('Error updating bill:', err);
     res.status(500).json({ error: 'Failed to update bill' });
   }
 });
 
-// DELETE /api/bills/:id - delete a bill
+// Delete a bill
 router.delete('/:id', async (req, res) => {
   try {
-    const id = parseInt(req.params.id);
-    const [result] = await pool.query('DELETE FROM bills WHERE BillID = ?', [id]);
-    if (result.affectedRows === 0) {
+    if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+      return res.status(400).json({ error: 'Invalid bill ID format' });
+    }
+    
+    const deletedBill = await Bill.findByIdAndDelete(req.params.id);
+    if (!deletedBill) {
       return res.status(404).json({ error: 'Bill not found' });
     }
-    res.json({ message: 'Bill deleted' });
+    res.json({ message: 'Bill deleted successfully' });
   } catch (err) {
     console.error('Error deleting bill:', err);
     res.status(500).json({ error: 'Failed to delete bill' });
   }
 });
 
-module.exports = { router, bills }; 
+// Process payment for a bill
+router.post('/process-payment', async (req, res) => {
+  try {
+    const { billId, paymentAmount, paymentMethod } = req.body;
+    if (!billId || !paymentAmount || !paymentMethod) {
+      return res.status(400).json({ error: 'billId, paymentAmount, and paymentMethod are required' });
+    }
+    
+    if (!mongoose.Types.ObjectId.isValid(billId)) {
+      return res.status(400).json({ error: 'Invalid bill ID format' });
+    }
+    
+    const bill = await Bill.findById(billId);
+    if (!bill) {
+      return res.status(404).json({ error: 'Bill not found' });
+    }
+    if (paymentAmount < bill.Amount) {
+      return res.status(400).json({ error: 'Payment amount is less than bill amount', required: bill.Amount, provided: paymentAmount });
+    }
+    bill.PaymentStatus = 'Paid';
+    bill.PaymentDate = new Date();
+    bill.PaymentMethod = paymentMethod;
+    await bill.save();
+    res.json({ success: true, message: 'Payment processed successfully', bill });
+  } catch (err) {
+    console.error('Error processing payment:', err);
+    res.status(500).json({ error: 'Failed to process payment' });
+  }
+});
+
+// Get outstanding amount for a user
+router.get('/outstanding/:userId', async (req, res) => {
+  try {
+    const userId = req.params.userId;
+    
+    if (!mongoose.Types.ObjectId.isValid(userId)) {
+      return res.status(400).json({ error: 'Invalid user ID format' });
+    }
+    
+    // Find all connections for this user
+    const userConnections = await Connection.find({ UserID: userId }).select('_id');
+    const connectionIds = userConnections.map(c => c._id);
+    
+    // Find all meter readings for these connections
+    const readings = await MeterReading.find({ ConnectionID: { $in: connectionIds } }).select('_id');
+    const readingIds = readings.map(r => r._id);
+    
+    // Find all unpaid/overdue bills for these readings
+    const bills = await Bill.find({ 
+      MeterReadingID: { $in: readingIds }, 
+      PaymentStatus: { $in: ['Unpaid', 'Overdue'] } 
+    });
+    
+    const outstandingAmount = bills.reduce((sum, b) => sum + (b.Amount || 0), 0);
+    res.json({ userId, outstandingAmount, billCount: bills.length });
+  } catch (err) {
+    console.error('Error fetching outstanding bills:', err);
+    res.status(500).json({ error: 'Failed to fetch outstanding bills' });
+  }
+});
+
+module.exports = router; 

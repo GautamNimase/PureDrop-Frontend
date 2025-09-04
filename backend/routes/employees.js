@@ -1,88 +1,82 @@
 const express = require('express');
 const router = express.Router();
-const { auditLogs, getNextId } = require('./auditLogsStore');
-const { triggerAfterEmployeeInsert, triggerAfterEmployeeUpdate, triggerAfterEmployeeDelete } = require('../utils/triggerFunctions');
-const pool = require('../config/database');
+const Employee = require('../models/Employee');
 
-// In-memory employees data (placeholder)
-let employees = [
-  { EmployeeID: 1, Name: 'Alice Johnson', Role: 'Manager', Contact: 'alice@example.com' },
-  { EmployeeID: 2, Name: 'Bob Smith', Role: 'Technician', Contact: 'bob@example.com' },
-  { EmployeeID: 3, Name: 'Carol Lee', Role: 'Clerk', Contact: 'carol@example.com' },
-];
-let nextId = 4;
-
-// GET /api/employees - fetch all employees
+// Get all employees
 router.get('/', async (req, res) => {
   try {
-    const [rows] = await pool.query('SELECT * FROM employees');
-    res.json(rows);
+    const employees = await Employee.find();
+    res.json(employees);
   } catch (err) {
     console.error('Error fetching employees:', err);
     res.status(500).json({ error: 'Failed to fetch employees' });
   }
 });
 
-// POST /api/employees - add a new employee
-router.post('/', async (req, res) => {
+// Get employee by ID
+router.get('/:id', async (req, res) => {
   try {
-    const { Name, Role, Contact } = req.body;
-    if (!Name || !Role || !Contact) {
-      return res.status(400).json({ error: 'All fields are required' });
+    const employee = await Employee.findById(req.params.id);
+    if (!employee) {
+      return res.status(404).json({ error: 'Employee not found' });
     }
-    // Insert into database
-    const [result] = await pool.query(
-      'INSERT INTO employees (Name, Role, Contact) VALUES (?, ?, ?)',
-      [Name, Role, Contact]
-    );
-    // Fetch the inserted employee
-    const [rows] = await pool.query('SELECT * FROM employees WHERE EmployeeID = ?', [result.insertId]);
-    const newEmployee = rows[0];
-    res.status(201).json(newEmployee);
+    res.json(employee);
   } catch (err) {
-    console.error('Error adding employee:', err);
-    res.status(500).json({ error: 'Failed to add employee' });
+    console.error('Error fetching employee:', err);
+    res.status(500).json({ error: 'Failed to fetch employee' });
   }
 });
 
-// PUT /api/employees/:id - update an employee
+// Create a new employee
+router.post('/', async (req, res) => {
+  try {
+    const { name, role, contact, status } = req.body;
+
+    // Add validation to ensure required fields are present
+    if (!name || !role || !contact) {
+      return res.status(400).json({ error: 'Missing required fields: name, role, and contact' });
+    }
+
+    const employee = new Employee({ name, role, contact, status });
+    await employee.save();
+    res.status(201).json({ message: 'Employee created successfully', employee });
+  } catch (err) {
+    console.error('Error creating employee:', err);
+    res.status(500).json({ error: 'Failed to create employee' });
+  }
+});
+
+// Update an employee
 router.put('/:id', async (req, res) => {
   try {
-    const id = parseInt(req.params.id);
-    const { Name, Role, Contact } = req.body;
-    if (!Name || !Role || !Contact) {
-      return res.status(400).json({ error: 'All fields are required' });
-    }
-    // Update the employee in the database
-    const [result] = await pool.query(
-      'UPDATE employees SET Name = ?, Role = ?, Contact = ? WHERE EmployeeID = ?',
-      [Name, Role, Contact, id]
+    const { name, role, contact, status } = req.body;
+    const updatedEmployee = await Employee.findByIdAndUpdate(
+      req.params.id,
+      { name, role, contact, status, updatedAt: Date.now() },
+      { new: true, runValidators: true }
     );
-    if (result.affectedRows === 0) {
+    if (!updatedEmployee) {
       return res.status(404).json({ error: 'Employee not found' });
     }
-    // Fetch the updated employee
-    const [rows] = await pool.query('SELECT * FROM employees WHERE EmployeeID = ?', [id]);
-    res.json(rows[0]);
+    res.json({ message: 'Employee updated successfully', employee: updatedEmployee });
   } catch (err) {
     console.error('Error updating employee:', err);
     res.status(500).json({ error: 'Failed to update employee' });
   }
 });
 
-// DELETE /api/employees/:id - delete an employee
+// Delete an employee
 router.delete('/:id', async (req, res) => {
   try {
-    const id = parseInt(req.params.id);
-    const [result] = await pool.query('DELETE FROM employees WHERE EmployeeID = ?', [id]);
-    if (result.affectedRows === 0) {
+    const deletedEmployee = await Employee.findByIdAndDelete(req.params.id);
+    if (!deletedEmployee) {
       return res.status(404).json({ error: 'Employee not found' });
     }
-    res.json({ message: 'Employee deleted' });
+    res.json({ message: 'Employee deleted successfully' });
   } catch (err) {
     console.error('Error deleting employee:', err);
     res.status(500).json({ error: 'Failed to delete employee' });
   }
 });
 
-module.exports = { router, employees }; 
+module.exports = router;

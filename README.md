@@ -1,36 +1,27 @@
-# Water Management System
+# PureDrop
 
-A full-featured admin dashboard and user portal for managing water utility operations, built with React (frontend) and Express (backend).
+A modern, fullstack water management system for users and administrators. PureDrop enables real-time monitoring, billing, alerts, and analytics for water usage and quality.
+
+---
 
 ## Features
-- **Admin Dashboard** with:
-  - Summary cards (customers, employees, connections, bills, readings, sources, alerts, complaints, etc.)
-  - Recent activity feed (audit logs)
-  - Quick actions (add/edit entities, view alerts)
-- **CRUD for all major entities:**
-  - Customers
-  - Employees
-  - Water Connections
-  - Meter Readings
-  - Bills
-  - Water Sources
-  - Water Quality
-  - Audit Logs (read-only)
-  - Alerts (read-only)
-  - Complaints
-- **Validation, modals, and responsive tables** for all admin pages
-- **Audit logging** for all create/update/delete actions
-- **Modern, accessible, mobile-friendly UI**
+- User and admin dashboards
+- Secure login/signup with JWT
+- MongoDB database with Mongoose ODM
+- Meter readings, billing, alerts, complaints, and more
+- Responsive React frontend
+- Node.js/Express backend
+- Role-based access and route protection
+- Beautiful UI/UX with accessibility
 
-## Tech Stack
-- **Frontend:** React, Tailwind CSS, React Router
-- **Backend:** Node.js, Express (in-memory data)
+---
 
 ## Getting Started
 
 ### Prerequisites
 - Node.js (v16+ recommended)
 - npm
+- MongoDB (local or cloud)
 
 ### 1. Clone the Repository
 ```bash
@@ -44,13 +35,22 @@ cd watersystem
 cd backend
 npm install
 ```
+
 #### Frontend
 ```bash
 cd ../frontend
 npm install
 ```
 
-### 3. Run the Application
+### 3. Environment Setup
+Create a `.env` file in the backend directory:
+```env
+MONGODB_URI=mongodb://localhost:27017/watersystem
+PORT=5000
+JWT_SECRET=your_jwt_secret_here
+```
+
+### 4. Run the Application
 #### Start Backend
 ```bash
 cd backend
@@ -65,7 +65,13 @@ npm start
 ```
 - The frontend runs on [http://localhost:3000](http://localhost:3000)
 
-### 4. Usage
+### 5. Add Sample Data (Optional)
+```bash
+cd backend
+node add-sample-data.js
+```
+
+### 6. Usage
 - Visit [http://localhost:3000](http://localhost:3000) in your browser.
 - Log in as admin or user (authentication is mocked or can be extended).
 - Use the sidebar to navigate between dashboard sections.
@@ -74,13 +80,28 @@ npm start
 ## Project Structure
 ```
 watersystem/
-  backend/      # Express API (in-memory data, REST endpoints)
+  backend/      # Express API with MongoDB
   frontend/     # React app (admin & user dashboards)
 ```
 
-## Customization
-- To persist data, replace in-memory arrays with a database (e.g., MongoDB, PostgreSQL).
-- To add authentication, integrate JWT or OAuth in backend and frontend.
+## Database Schema
+- **Users** - Customer information and connection types
+- **Employees** - Staff management and roles
+- **Water Sources** - Reservoirs, wells, rivers, lakes
+- **Connections** - User-source connections with meters
+- **Meter Readings** - Consumption tracking with automatic billing
+- **Bills** - Payment management with status tracking
+- **Alerts** - System notifications and warnings
+- **Complaints** - Customer service management
+- **Audit Logs** - System activity tracking
+
+## Key Features
+- **Automatic Billing** - Bills generated from meter readings
+- **High Consumption Alerts** - Automatic alerts for >100 units
+- **Payment Tracking** - Overdue detection and payment processing
+- **Audit Logging** - Complete activity tracking
+- **Role-based Access** - Admin and user dashboards
+- **Real-time Analytics** - Consumption and billing reports
 
 ## License
 MIT (or your chosen license) 

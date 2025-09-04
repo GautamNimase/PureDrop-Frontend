@@ -1,117 +1,125 @@
 const express = require('express');
 const router = express.Router();
-const { auditLogs, getNextId } = require('./auditLogsStore');
-const { alerts } = require('./alerts');
-const { connections } = require('./connections');
-const { checkConsumptionAlert, isHighConsumption, calculateAverageConsumption } = require('../utils/consumptionFunctions');
-const { validateMeterReadingData } = require('../utils/validationFunctions');
-const { triggerAfterMeterReadingInsert, triggerAfterMeterReadingUpdate, triggerAfterMeterReadingDelete } = require('../utils/triggerFunctions');
-const pool = require('../config/database');
+const MeterReading = require('../models/MeterReading');
+const Connection = require('../models/Connection');
+const mongoose = require('mongoose');
 
-// In-memory meter readings data (placeholder)
-let readings = [
-  { MeterReadingID: 1, ReadingDate: '2023-03-01', UnitsConsumed: 120, ConnectionID: 1 },
-  { MeterReadingID: 2, ReadingDate: '2023-03-02', UnitsConsumed: 80, ConnectionID: 2 },
-];
-let nextId = 3;
-
-// GET /api/readings - fetch all readings or by userId
+// Get all readings or by userId
 router.get('/', async (req, res) => {
   try {
     const { userId } = req.query;
-    let query = 'SELECT * FROM meter_readings';
-    let params = [];
+    let query = {};
+    
     if (userId) {
-      query += ' WHERE ConnectionID IN (SELECT ConnectionID FROM connections WHERE UserID = ?)';
-      params.push(userId);
+      // Validate if userId is a valid ObjectId
+      if (!mongoose.Types.ObjectId.isValid(userId)) {
+        return res.status(400).json({ error: 'Invalid user ID format' });
+      }
+      
+      // Find all connections for this user
+      const userConnections = await Connection.find({ UserID: userId }).select('_id');
+      const connectionIds = userConnections.map(c => c._id);
+      query.ConnectionID = { $in: connectionIds };
     }
-    const [rows] = await pool.query(query, params);
-    res.json(rows);
+    
+    const readings = await MeterReading.find(query)
+      .populate({ 
+        path: 'ConnectionID', 
+        select: 'MeterNumber UserID', 
+        populate: { 
+          path: 'UserID', 
+          select: 'Name Email' 
+        } 
+      });
+    res.json(readings);
   } catch (err) {
     console.error('Error fetching readings:', err);
     res.status(500).json({ error: 'Failed to fetch readings' });
   }
 });
 
-// GET /api/readings/:id - fetch a specific reading
+// Get reading by ID
 router.get('/:id', async (req, res) => {
   try {
-    const id = parseInt(req.params.id);
-    const [rows] = await pool.query('SELECT * FROM meter_readings WHERE MeterReadingID = ?', [id]);
-    if (rows.length === 0) {
+    if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+      return res.status(400).json({ error: 'Invalid reading ID format' });
+    }
+    
+    const reading = await MeterReading.findById(req.params.id)
+      .populate({ 
+        path: 'ConnectionID', 
+        select: 'MeterNumber UserID', 
+        populate: { 
+          path: 'UserID', 
+          select: 'Name Email' 
+        } 
+      });
+    if (!reading) {
       return res.status(404).json({ error: 'Reading not found' });
     }
-    res.json(rows[0]);
+    res.json(reading);
   } catch (err) {
     console.error('Error fetching reading:', err);
     res.status(500).json({ error: 'Failed to fetch reading' });
   }
 });
 
-// POST /api/readings - add a new reading
+// Create a new reading
 router.post('/', async (req, res) => {
   try {
-    const { ReadingDate, UnitsConsumed, ConnectionID } = req.body;
-    // Validate input data
-    const validationErrors = validateMeterReadingData({ ReadingDate, UnitsConsumed, ConnectionID });
-    if (Object.keys(validationErrors).length > 0) {
-      return res.status(400).json({ error: 'Validation failed', details: validationErrors });
-    }
-    // Insert into database
-    const [result] = await pool.query(
-      'INSERT INTO meter_readings (ReadingDate, UnitsConsumed, ConnectionID) VALUES (?, ?, ?)',
-      [ReadingDate, UnitsConsumed, ConnectionID]
-    );
-    // Fetch the inserted reading
-    const [rows] = await pool.query('SELECT * FROM meter_readings WHERE MeterReadingID = ?', [result.insertId]);
-    const newReading = rows[0];
-    res.status(201).json(newReading);
+    const { ConnectionID, ReadingDate, UnitsConsumed } = req.body;
+    const reading = new MeterReading({
+      ConnectionID,
+      ReadingDate,
+      UnitsConsumed
+    });
+    await reading.save();
+    res.status(201).json({ message: 'Reading created successfully', reading });
   } catch (err) {
-    console.error('Error adding reading:', err);
-    res.status(500).json({ error: 'Failed to add reading' });
+    console.error('Error creating reading:', err);
+    res.status(500).json({ error: 'Failed to create reading' });
   }
 });
 
-// PUT /api/readings/:id - update a reading
+// Update a reading
 router.put('/:id', async (req, res) => {
   try {
-    const id = parseInt(req.params.id);
-    const { ReadingDate, UnitsConsumed, ConnectionID } = req.body;
-    // Validate input data
-    const validationErrors = validateMeterReadingData({ ReadingDate, UnitsConsumed, ConnectionID });
-    if (Object.keys(validationErrors).length > 0) {
-      return res.status(400).json({ error: 'Validation failed', details: validationErrors });
+    if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+      return res.status(400).json({ error: 'Invalid reading ID format' });
     }
-    // Update the reading in the database
-    const [result] = await pool.query(
-      'UPDATE meter_readings SET ReadingDate = ?, UnitsConsumed = ?, ConnectionID = ? WHERE MeterReadingID = ?',
-      [ReadingDate, UnitsConsumed, ConnectionID, id]
+    
+    const { ConnectionID, ReadingDate, UnitsConsumed } = req.body;
+    const updatedReading = await MeterReading.findByIdAndUpdate(
+      req.params.id,
+      { ConnectionID, ReadingDate, UnitsConsumed, UpdatedAt: Date.now() },
+      { new: true, runValidators: true }
     );
-    if (result.affectedRows === 0) {
+    if (!updatedReading) {
       return res.status(404).json({ error: 'Reading not found' });
     }
-    // Fetch the updated reading
-    const [rows] = await pool.query('SELECT * FROM meter_readings WHERE MeterReadingID = ?', [id]);
-    res.json(rows[0]);
+    res.json({ message: 'Reading updated successfully', reading: updatedReading });
   } catch (err) {
     console.error('Error updating reading:', err);
     res.status(500).json({ error: 'Failed to update reading' });
   }
 });
 
-// DELETE /api/readings/:id - delete a reading
+// Delete a reading
 router.delete('/:id', async (req, res) => {
   try {
-    const id = parseInt(req.params.id);
-    const [result] = await pool.query('DELETE FROM meter_readings WHERE MeterReadingID = ?', [id]);
-    if (result.affectedRows === 0) {
+    if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+      return res.status(400).json({ error: 'Invalid reading ID format' });
+    }
+    
+    const deletedReading = await MeterReading.findByIdAndDelete(req.params.id);
+    if (!deletedReading) {
       return res.status(404).json({ error: 'Reading not found' });
     }
-    res.json({ message: 'Reading deleted' });
+    res.json({ message: 'Reading deleted successfully' });
   } catch (err) {
     console.error('Error deleting reading:', err);
     res.status(500).json({ error: 'Failed to delete reading' });
   }
 });
 
-module.exports = { router, readings }; 
+module.exports = router; 

@@ -1,3 +1,4 @@
+const connectDB = require('./config/mongoose');
 const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
@@ -5,7 +6,6 @@ const rateLimit = require('express-rate-limit');
 require('dotenv').config();
 
 const app = express();
-// app.set('trust proxy', true); // Commented out for local development to avoid express-rate-limit error
 const PORT = process.env.PORT || 5000;
 
 // Middleware
@@ -14,47 +14,44 @@ app.use(cors());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
+// Connect to MongoDB
+connectDB(app);
+
 // Rate limiting
+app.set('trust proxy', 1);
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
   max: 100 // limit each IP to 100 requests per windowMs
 });
 app.use(limiter);
 
-// Database connection
-const db = require('./config/database');
-const { testConnection } = require('./utils/databaseUtils');
-
-// Initialize database
-const { initializeDatabase } = require('./database/init');
-
 // Routes
 const usersRoute = require('./routes/users');
-app.use('/api/users', usersRoute.router);
+app.use('/api/users', usersRoute);
 const waterSourcesRoute = require('./routes/waterSources');
-app.use('/api/water-sources', waterSourcesRoute.router);
+app.use('/api/water-sources', waterSourcesRoute);
 const connectionsRoute = require('./routes/connections');
-app.use('/api/connections', connectionsRoute.router);
+app.use('/api/connections', connectionsRoute);
 const readingsRoute = require('./routes/readings');
-app.use('/api/readings', readingsRoute.router);
+app.use('/api/readings', readingsRoute);
 const billsRoute = require('./routes/bills');
-app.use('/api/bills', billsRoute.router);
+app.use('/api/bills', billsRoute);
 const employeesRoute = require('./routes/employees');
-app.use('/api/employees', employeesRoute.router);
+app.use('/api/employees', employeesRoute);
 const alertsRoute = require('./routes/alerts');
-app.use('/api/alerts', alertsRoute.router);
-app.use('/api/complaints', require('./routes/complaints').router);
+app.use('/api/alerts', alertsRoute);
+app.use('/api/complaints', require('./routes/complaints'));
 app.use('/api/consumption', require('./routes/consumption'));
 app.use('/api/quality', require('./routes/quality'));
 app.use('/api/audit', require('./routes/audit'));
 
-// Analytics route - import properly
+// Analytics route
 const analyticsRoute = require('./routes/analytics');
-app.use('/api/analytics', analyticsRoute.router);
+app.use('/api/analytics', analyticsRoute);
 
-// Views route - database views as API endpoints
+// Views route - MongoDB aggregation endpoints
 const viewsRoute = require('./routes/views');
-app.use('/api/views', viewsRoute.router);
+app.use('/api/views', viewsRoute);
 
 // Add authentication routes
 const authRoute = require('./routes/auth');
@@ -63,19 +60,33 @@ app.use('/api/auth', authRoute);
 // Summary stats endpoint
 app.get('/api/summary', async (req, res) => {
   try {
-    const { executeStoredProcedure } = require('./utils/databaseUtils');
-    const summary = await executeStoredProcedure('sp_GetSystemSummary');
-    res.json(summary[0]);
+    const User = require('./models/User');
+    const Employee = require('./models/Employee');
+    const Connection = require('./models/Connection');
+    const Bill = require('./models/Bill');
+    const Alert = require('./models/Alert');
+    const Complaint = require('./models/Complaint');
+
+    const summary = {
+      users: await User.countDocuments(),
+      employees: await Employee.countDocuments(),
+      connections: await Connection.countDocuments(),
+      bills: await Bill.countDocuments(),
+      alerts: await Alert.countDocuments(),
+      complaints: await Complaint.countDocuments()
+    };
+
+    res.json(summary);
   } catch (error) {
-    console.error('Error getting summary:', error);
-    res.status(500).json({ error: 'Failed to get system summary' });
+    res.status(500).json({ error: error.message });
   }
 });
 
 // Health check endpoint
 app.get('/api/health', async (req, res) => {
   try {
-    const isConnected = await testConnection();
+    const mongoose = require('mongoose');
+    const isConnected = mongoose.connection.readyState === 1;
     res.json({ 
       status: isConnected ? 'OK' : 'ERROR',
       message: isConnected ? 'Water System API is running' : 'Database connection failed',
@@ -95,12 +106,29 @@ app.get('/api/health', async (req, res) => {
 // Database stats endpoint
 app.get('/api/stats', async (req, res) => {
   try {
-    const { getDatabaseStats } = require('./utils/databaseUtils');
-    const stats = await getDatabaseStats();
+    const User = require('./models/User');
+    const Employee = require('./models/Employee');
+    const Connection = require('./models/Connection');
+    const MeterReading = require('./models/MeterReading');
+    const Bill = require('./models/Bill');
+    const Alert = require('./models/Alert');
+    const Complaint = require('./models/Complaint');
+    const AuditLog = require('./models/AuditLog');
+
+    const stats = {
+      users: await User.countDocuments(),
+      employees: await Employee.countDocuments(),
+      connections: await Connection.countDocuments(),
+      meter_readings: await MeterReading.countDocuments(),
+      bills: await Bill.countDocuments(),
+      alerts: await Alert.countDocuments(),
+      complaints: await Complaint.countDocuments(),
+      audit_logs: await AuditLog.countDocuments()
+    };
+
     res.json(stats);
   } catch (error) {
-    console.error('Error getting stats:', error);
-    res.status(500).json({ error: 'Failed to get database stats' });
+    res.status(500).json({ error: error.message });
   }
 });
 
@@ -115,38 +143,10 @@ app.use((err, req, res, next) => {
 
 // 404 handler
 app.use('*', (req, res) => {
-  res.status(404).json({ error: 'Route not found' });
+  res.status(404).json({ 
+    error: 'Route not found',
+    message: `Cannot ${req.method} ${req.originalUrl}` 
+  });
 });
 
-// Initialize database and start server
-async function startServer() {
-  try {
-    console.log('🔌 Testing database connection...');
-    const isConnected = await testConnection();
-    
-    if (!isConnected) {
-      console.error('❌ Database connection failed. Please check your MySQL configuration.');
-      console.log('📋 Make sure MySQL is running and update your .env file with correct credentials.');
-      process.exit(1);
-    }
-    
-    console.log('✅ Database connection successful!');
-    
-    // Initialize database schema (only if needed)
-    console.log('📋 Initializing database schema...');
-    await initializeDatabase();
-    
-    app.listen(PORT, () => {
-      console.log(`🚀 Server running on port ${PORT}`);
-      console.log(`🏥 Health check: http://localhost:${PORT}/api/health`);
-      console.log(`📊 Database stats: http://localhost:${PORT}/api/stats`);
-      console.log(`📋 API Documentation: http://localhost:${PORT}/api/views/user-overview`);
-    });
-    
-  } catch (error) {
-    console.error('❌ Server startup failed:', error);
-    process.exit(1);
-  }
-}
-
-startServer(); 
+module.exports = app; 

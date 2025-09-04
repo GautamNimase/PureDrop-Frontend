@@ -1,102 +1,95 @@
 const express = require('express');
-const bcrypt = require('bcrypt');
-const jwt = require('jsonwebtoken');
-const pool = require('../config/database');
 const router = express.Router();
+const User = require('../models/User');
+const Admin = require('../models/Admin');
+const bcrypt = require('bcryptjs');
+const jwt = require('jsonwebtoken');
 
-const JWT_SECRET = process.env.JWT_SECRET || 'your_jwt_secret';
-
-// User Signup
+// User Registration
 router.post('/user/signup', async (req, res) => {
-  const { name, email, password, phone, address } = req.body;
-  if (!name || !email || !password) {
-    return res.status(400).json({ message: 'Name, email, and password are required.' });
-  }
   try {
-    const [existing] = await pool.query('SELECT * FROM users WHERE Email = ?', [email]);
-    if (existing.length > 0) {
-      return res.status(409).json({ message: 'Email already registered.' });
+    const { name, email, password, phone, address, connectionType } = req.body;
+    const existingUser = await User.findOne({ Email: email });
+    if (existingUser) {
+      return res.status(409).json({ error: 'User already exists' });
     }
-    const hash = await bcrypt.hash(password, 10);
-    await pool.query(
-      'INSERT INTO users (Name, Email, PasswordHash, Phone, Address) VALUES (?, ?, ?, ?, ?)',
-      [name, email, hash, phone || '', address || '']
-    );
-    return res.status(201).json({ message: 'User registered successfully.' });
+    const passwordHash = await bcrypt.hash(password, 10);
+    const user = new User({
+      Name: name,
+      Email: email,
+      PasswordHash: passwordHash,
+      Phone: phone,
+      Address: address,
+      ConnectionType: connectionType || 'Residential'
+    });
+    await user.save();
+    res.status(201).json({ message: 'User registered successfully', user: { id: user._id, email: user.Email, name: user.Name, role: 'user' } });
   } catch (err) {
-    console.error(err);
-    return res.status(500).json({ message: 'Server error', error: err.message });
+    console.error('User registration error:', err);
+    res.status(500).json({ error: 'Registration failed' });
   }
 });
 
 // User Login
 router.post('/user/login', async (req, res) => {
-  const { email, password } = req.body;
-  if (!email || !password) {
-    return res.status(400).json({ message: 'Email and password are required.' });
-  }
   try {
-    const [users] = await pool.query('SELECT * FROM users WHERE Email = ?', [email]);
-    if (users.length === 0) {
-      return res.status(401).json({ message: 'Invalid credentials.' });
+    const { email, password } = req.body;
+    const user = await User.findOne({ Email: email });
+    if (!user) {
+      return res.status(401).json({ error: 'Invalid credentials' });
     }
-    const user = users[0];
-    const match = await bcrypt.compare(password, user.PasswordHash);
-    if (!match) {
-      return res.status(401).json({ message: 'Invalid credentials.' });
+    const isMatch = await bcrypt.compare(password, user.PasswordHash);
+    if (!isMatch) {
+      return res.status(401).json({ error: 'Invalid credentials' });
     }
-    const token = jwt.sign({ id: user.UserID, role: 'user' }, JWT_SECRET, { expiresIn: '1d' });
-    return res.json({ token, user: { id: user.UserID, name: user.Name, email: user.Email, role: 'user' } });
+    const token = jwt.sign({ id: user._id, role: 'user' }, process.env.JWT_SECRET, { expiresIn: '7d' });
+    res.json({ message: 'Login successful', user: { id: user._id, email: user.Email, name: user.Name, role: 'user' }, token });
   } catch (err) {
-    console.error(err);
-    return res.status(500).json({ message: 'Server error', error: err.message });
+    console.error('User login error:', err);
+    res.status(500).json({ error: 'Login failed' });
   }
 });
 
-// Admin Signup
+// Admin Registration
 router.post('/admin/signup', async (req, res) => {
-  const { name, email, password, phone } = req.body;
-  if (!name || !email || !password) {
-    return res.status(400).json({ message: 'Name, email, and password are required.' });
-  }
   try {
-    const [existing] = await pool.query('SELECT * FROM admins WHERE Email = ?', [email]);
-    if (existing.length > 0) {
-      return res.status(409).json({ message: 'Email already registered.' });
+    const { name, email, password, phone } = req.body;
+    const existingAdmin = await Admin.findOne({ Email: email });
+    if (existingAdmin) {
+      return res.status(409).json({ error: 'Admin already exists' });
     }
-    const hash = await bcrypt.hash(password, 10);
-    await pool.query(
-      'INSERT INTO admins (Name, Email, PasswordHash, Phone) VALUES (?, ?, ?, ?)',
-      [name, email, hash, phone || '']
-    );
-    return res.status(201).json({ message: 'Admin registered successfully.' });
+    const passwordHash = await bcrypt.hash(password, 10);
+    const admin = new Admin({
+      Name: name,
+      Email: email,
+      Phone: phone,
+      PasswordHash: passwordHash
+    });
+    await admin.save();
+    res.status(201).json({ message: 'Admin registered successfully', admin: { id: admin._id, email: admin.Email, name: admin.Name, role: 'admin' } });
   } catch (err) {
-    console.error(err);
-    return res.status(500).json({ message: 'Server error', error: err.message });
+    console.error('Admin registration error:', err);
+    res.status(500).json({ error: 'Registration failed' });
   }
 });
 
 // Admin Login
 router.post('/admin/login', async (req, res) => {
-  const { email, password } = req.body;
-  if (!email || !password) {
-    return res.status(400).json({ message: 'Email and password are required.' });
-  }
   try {
-    const [admins] = await pool.query('SELECT * FROM admins WHERE Email = ?', [email]);
-    if (admins.length === 0) {
-      return res.status(401).json({ message: 'Invalid credentials.' });
+    const { email, password } = req.body;
+    const admin = await Admin.findOne({ Email: email });
+    if (!admin) {
+      return res.status(401).json({ error: 'Invalid credentials' });
     }
-    const admin = admins[0];
-    const match = await bcrypt.compare(password, admin.PasswordHash);
-    if (!match) {
-      return res.status(401).json({ message: 'Invalid credentials.' });
+    const isMatch = await bcrypt.compare(password, admin.PasswordHash);
+    if (!isMatch) {
+      return res.status(401).json({ error: 'Invalid credentials' });
     }
-    const token = jwt.sign({ id: admin.AdminID, role: 'admin' }, JWT_SECRET, { expiresIn: '1d' });
-    return res.json({ token, admin: { id: admin.AdminID, name: admin.Name, email: admin.Email, role: 'admin' } });
+    const token = jwt.sign({ id: admin._id, role: 'admin' }, process.env.JWT_SECRET, { expiresIn: '7d' });
+    res.json({ message: 'Login successful', admin: { id: admin._id, email: admin.Email, name: admin.Name, role: 'admin' }, token });
   } catch (err) {
-    console.error(err);
-    return res.status(500).json({ message: 'Server error', error: err.message });
+    console.error('Admin login error:', err);
+    res.status(500).json({ error: 'Login failed' });
   }
 });
 

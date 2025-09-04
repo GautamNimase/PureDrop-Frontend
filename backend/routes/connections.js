@@ -1,114 +1,119 @@
 const express = require('express');
 const router = express.Router();
-const { auditLogs, getNextId } = require('./auditLogsStore');
-const { triggerAfterConnectionInsert, triggerAfterConnectionUpdate, triggerAfterConnectionDelete } = require('../utils/triggerFunctions');
-const pool = require('../config/database');
+const Connection = require('../models/Connection');
+const User = require('../models/User');
+const WaterSource = require('../models/WaterSource');
+const mongoose = require('mongoose');
 
-// In-memory water connections data (placeholder)
-let connections = [
-  { ConnectionID: 1, UserID: 1, ConnectionDate: '2023-01-01', MeterNumber: 'MTR001', Status: 'Active', SourceID: 1 },
-  { ConnectionID: 2, UserID: 2, ConnectionDate: '2023-02-15', MeterNumber: 'MTR002', Status: 'Inactive', SourceID: 2 },
-];
-let nextId = 3;
-
-// GET /api/connections - fetch all connections or by userId
+// Get all connections
 router.get('/', async (req, res) => {
   try {
     const { userId } = req.query;
-    let query = 'SELECT * FROM connections';
-    let params = [];
+    let query = {};
+    
     if (userId) {
-      query += ' WHERE UserID = ?';
-      params.push(userId);
+      // Validate if userId is a valid ObjectId
+      if (!mongoose.Types.ObjectId.isValid(userId)) {
+        return res.status(400).json({ error: 'Invalid user ID format' });
+      }
+      query.UserID = userId;
     }
-    const [rows] = await pool.query(query, params);
-    res.json(rows);
+    
+    const connections = await Connection.find(query)
+      .populate('UserID', 'Name Email')
+      .populate('SourceID', 'Name Type');
+    res.json(connections);
   } catch (err) {
     console.error('Error fetching connections:', err);
     res.status(500).json({ error: 'Failed to fetch connections' });
   }
 });
 
-// POST /api/connections - add a new connection (sp_CreateConnection implementation)
-router.post('/', async (req, res) => {
+// Get connection by ID
+router.get('/:id', async (req, res) => {
   try {
-    const { UserID, ConnectionDate, MeterNumber, Status, SourceID } = req.body;
-    if (!UserID || !ConnectionDate || !MeterNumber || !Status || !SourceID) {
-      return res.status(400).json({ error: 'All fields are required' });
+    if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+      return res.status(400).json({ error: 'Invalid connection ID format' });
     }
-    // Check if user exists
-    const [userRows] = await pool.query('SELECT * FROM users WHERE UserID = ?', [UserID]);
-    if (userRows.length === 0) {
-      return res.status(400).json({ error: 'User does not exist' });
+    
+    const connection = await Connection.findById(req.params.id)
+      .populate('UserID', 'Name Email')
+      .populate('SourceID', 'Name Type');
+    if (!connection) {
+      return res.status(404).json({ error: 'Connection not found' });
     }
-    // Check if meter number already exists
-    const [meterRows] = await pool.query('SELECT * FROM connections WHERE MeterNumber = ?', [MeterNumber]);
-    if (meterRows.length > 0) {
-      return res.status(400).json({ error: 'Meter number already exists' });
-    }
-    // Insert into database
-    const [result] = await pool.query(
-      'INSERT INTO connections (UserID, ConnectionDate, MeterNumber, Status, SourceID) VALUES (?, ?, ?, ?, ?)',
-      [UserID, ConnectionDate, MeterNumber, Status, SourceID]
-    );
-    // Fetch the inserted connection
-    const [rows] = await pool.query('SELECT * FROM connections WHERE ConnectionID = ?', [result.insertId]);
-    const newConnection = rows[0];
-    res.status(201).json(newConnection);
+    res.json(connection);
   } catch (err) {
-    console.error('Error adding connection:', err);
-    res.status(500).json({ error: 'Failed to add connection' });
+    console.error('Error fetching connection:', err);
+    res.status(500).json({ error: 'Failed to fetch connection' });
   }
 });
 
-// PUT /api/connections/:id - update a connection
+// Create a new connection
+router.post('/', async (req, res) => {
+  try {
+    const { UserID, SourceID, MeterNumber, ConnectionDate, Status } = req.body;
+    
+    // Check for duplicate meter number
+    const existing = await Connection.findOne({ MeterNumber });
+    if (existing) {
+      return res.status(409).json({ error: 'Meter number already exists' });
+    }
+    
+    const connection = new Connection({
+      UserID,
+      SourceID,
+      MeterNumber,
+      ConnectionDate,
+      Status
+    });
+    await connection.save();
+    res.status(201).json({ message: 'Connection created successfully', connection });
+  } catch (err) {
+    console.error('Error creating connection:', err);
+    res.status(500).json({ error: 'Failed to create connection' });
+  }
+});
+
+// Update a connection
 router.put('/:id', async (req, res) => {
   try {
-    const id = parseInt(req.params.id);
-    const { UserID, ConnectionDate, MeterNumber, Status, SourceID } = req.body;
-    if (!UserID || !ConnectionDate || !MeterNumber || !Status || !SourceID) {
-      return res.status(400).json({ error: 'All fields are required' });
+    if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+      return res.status(400).json({ error: 'Invalid connection ID format' });
     }
-    // Check if user exists
-    const [userRows] = await pool.query('SELECT * FROM users WHERE UserID = ?', [UserID]);
-    if (userRows.length === 0) {
-      return res.status(400).json({ error: 'User does not exist' });
-    }
-    // Check if meter number already exists (excluding current connection)
-    const [meterRows] = await pool.query('SELECT * FROM connections WHERE MeterNumber = ? AND ConnectionID != ?', [MeterNumber, id]);
-    if (meterRows.length > 0) {
-      return res.status(400).json({ error: 'Meter number already exists' });
-    }
-    // Update the connection in the database
-    const [result] = await pool.query(
-      'UPDATE connections SET UserID = ?, ConnectionDate = ?, MeterNumber = ?, Status = ?, SourceID = ? WHERE ConnectionID = ?',
-      [UserID, ConnectionDate, MeterNumber, Status, SourceID, id]
+    
+    const { UserID, SourceID, MeterNumber, ConnectionDate, Status } = req.body;
+    const updatedConnection = await Connection.findByIdAndUpdate(
+      req.params.id,
+      { UserID, SourceID, MeterNumber, ConnectionDate, Status, UpdatedAt: Date.now() },
+      { new: true, runValidators: true }
     );
-    if (result.affectedRows === 0) {
+    if (!updatedConnection) {
       return res.status(404).json({ error: 'Connection not found' });
     }
-    // Fetch the updated connection
-    const [rows] = await pool.query('SELECT * FROM connections WHERE ConnectionID = ?', [id]);
-    res.json(rows[0]);
+    res.json({ message: 'Connection updated successfully', connection: updatedConnection });
   } catch (err) {
     console.error('Error updating connection:', err);
     res.status(500).json({ error: 'Failed to update connection' });
   }
 });
 
-// DELETE /api/connections/:id - delete a connection
+// Delete a connection
 router.delete('/:id', async (req, res) => {
   try {
-    const id = parseInt(req.params.id);
-    const [result] = await pool.query('DELETE FROM connections WHERE ConnectionID = ?', [id]);
-    if (result.affectedRows === 0) {
+    if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+      return res.status(400).json({ error: 'Invalid connection ID format' });
+    }
+    
+    const deletedConnection = await Connection.findByIdAndDelete(req.params.id);
+    if (!deletedConnection) {
       return res.status(404).json({ error: 'Connection not found' });
     }
-    res.json({ message: 'Connection deleted' });
+    res.json({ message: 'Connection deleted successfully' });
   } catch (err) {
     console.error('Error deleting connection:', err);
     res.status(500).json({ error: 'Failed to delete connection' });
   }
 });
 
-module.exports = { router, connections }; 
+module.exports = router; 
