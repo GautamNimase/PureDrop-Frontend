@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { EyeIcon, EyeSlashIcon } from '@heroicons/react/24/outline';
 import { useData } from '../context/DataContext';
 import { useAuth } from '../context/AuthContext';
+import api from '../config/api';
 
 const SignUp = () => {
   const [isAdminSignup, setIsAdminSignup] = useState(false);
@@ -87,17 +88,8 @@ const SignUp = () => {
       const payload = isAdminSignup
         ? { name: formData.name, email: formData.email, password: formData.password, phone: formData.phone }
         : { name: formData.name, email: formData.email, password: formData.password, phone: formData.phone, address: formData.address };
-      const response = await fetch(endpoint, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-      });
-      const data = await response.json();
-      if (!response.ok) {
-        setErrors({ general: data.message || 'Signup failed' });
-        setLoading(false);
-        return;
-      }
+      
+      const data = await api.post(endpoint, payload);
       setSuccess(true);
       setLoading(false);
       setTimeout(() => {

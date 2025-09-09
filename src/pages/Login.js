@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { BeakerIcon, EyeIcon, EyeSlashIcon } from '@heroicons/react/24/outline';
+import api from '../config/api';
 
 const Login = () => {
   const [isAdminLogin, setIsAdminLogin] = useState(false);
@@ -87,20 +88,10 @@ const Login = () => {
     setErrors({});
     try {
       const endpoint = isAdminLogin ? '/api/auth/admin/login' : '/api/auth/user/login';
-      const response = await fetch(endpoint, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          email: formData.email,
-          password: formData.password
-        })
+      const data = await api.post(endpoint, {
+        email: formData.email,
+        password: formData.password
       });
-      const data = await response.json();
-      if (!response.ok) {
-        setErrors({ general: data.message || 'Login failed' });
-        setLoading(false);
-        return;
-      }
       // Save JWT and user/admin info
       login(isAdminLogin ? data.admin : data.user, data.token);
       navigate(isAdminLogin ? '/admin/dashboard' : '/user/dashboard');
