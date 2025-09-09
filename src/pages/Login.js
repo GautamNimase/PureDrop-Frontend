@@ -2,7 +2,31 @@ import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { BeakerIcon, EyeIcon, EyeSlashIcon } from '@heroicons/react/24/outline';
-import api from '../config/apiNew';
+// Direct API configuration
+const API_BASE_URL = process.env.REACT_APP_API_URL || 'https://puredrop-backend.onrender.com/api';
+
+const apiCall = async (endpoint, options = {}) => {
+  const url = endpoint.startsWith('/api') 
+    ? `${API_BASE_URL}${endpoint.substring(4)}`
+    : `${API_BASE_URL}${endpoint}`;
+  
+  console.log('API Call:', { endpoint, url, options });
+  
+  const response = await fetch(url, {
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    ...options
+  });
+  
+  if (!response.ok) {
+    const errorText = await response.text();
+    console.error('API Error:', { status: response.status, statusText: response.statusText, errorText });
+    throw new Error(`HTTP error! status: ${response.status} - ${errorText}`);
+  }
+  
+  return response.json();
+};
 
 const Login = () => {
   const [isAdminLogin, setIsAdminLogin] = useState(false);
@@ -88,9 +112,12 @@ const Login = () => {
     setErrors({});
     try {
       const endpoint = isAdminLogin ? '/api/auth/admin/login' : '/api/auth/user/login';
-      const data = await api.post(endpoint, {
-        email: formData.email,
-        password: formData.password
+      const data = await apiCall(endpoint, {
+        method: 'POST',
+        body: JSON.stringify({
+          email: formData.email,
+          password: formData.password
+        })
       });
       // Save JWT and user/admin info
       login(isAdminLogin ? data.admin : data.user, data.token);
