@@ -96,7 +96,8 @@ const SignUp = () => {
         navigate('/login');
       }, 1500);
     } catch (err) {
-      setErrors({ general: 'Server error. Please try again.' });
+      console.error('Signup error:', err);
+      setErrors({ general: err.message || 'Server error. Please try again.' });
       setLoading(false);
     }
   };

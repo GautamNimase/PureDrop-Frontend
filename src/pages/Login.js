@@ -96,7 +96,8 @@ const Login = () => {
       login(isAdminLogin ? data.admin : data.user, data.token);
       navigate(isAdminLogin ? '/admin/dashboard' : '/user/dashboard');
     } catch (err) {
-      setErrors({ general: 'Server error. Please try again.' });
+      console.error('Login error:', err);
+      setErrors({ general: err.message || 'Server error. Please try again.' });
     }
     setLoading(false);
   };
