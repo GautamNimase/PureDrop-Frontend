@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { EyeIcon, EyeSlashIcon } from '@heroicons/react/24/outline';
 import { useData } from '../context/DataContext';
 import { useAuth } from '../context/AuthContext';
-import api from '../config/api';
+import api from '../config/apiNew';
 
 const SignUp = () => {
   const [isAdminSignup, setIsAdminSignup] = useState(false);

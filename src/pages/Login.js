@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { BeakerIcon, EyeIcon, EyeSlashIcon } from '@heroicons/react/24/outline';
-import api from '../config/api';
+import api from '../config/apiNew';
 
 const Login = () => {
   const [isAdminLogin, setIsAdminLogin] = useState(false);
