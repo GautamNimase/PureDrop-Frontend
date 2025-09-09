@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { formatDate } from '../../utils/dateFormatter';
+import api from '../../config/api';
 import { 
   CogIcon, 
   MagnifyingGlassIcon, 
@@ -127,13 +128,8 @@ const ConnectionsPage = () => {
       setLoading(false);
     }, 1000);
     
-    // Uncomment below for real API call
-    /*
-    fetch('/api/connections')
-      .then((res) => {
-        if (!res.ok) throw new Error('Failed to fetch connections');
-        return res.json();
-      })
+    // Real API call
+    api.get('/api/connections')
       .then((data) => {
         setConnections(data);
         setLoading(false);
@@ -142,7 +138,6 @@ const ConnectionsPage = () => {
         setError(err.message);
         setLoading(false);
       });
-    */
   };
 
   // Fetch users for lookup
@@ -162,15 +157,9 @@ const ConnectionsPage = () => {
     }, 500);
     
     // Uncomment below for real API call
-    /*
-    fetch('/api/users')
-      .then((res) => {
-        if (!res.ok) throw new Error('Failed to fetch users');
-        return res.json();
-      })
+    api.get('/api/users')
       .then((data) => setUsers(data))
       .catch(() => setUsers([]));
-    */
   };
 
   // Fetch water sources for dropdown
@@ -189,15 +178,9 @@ const ConnectionsPage = () => {
     }, 500);
     
     // Uncomment below for real API call
-    /*
-    fetch('/api/water-sources')
-      .then((res) => {
-        if (!res.ok) throw new Error('Failed to fetch water sources');
-        return res.json();
-      })
+    api.get('/api/water-sources')
       .then((data) => setWaterSources(data))
       .catch(() => setWaterSources([]));
-    */
   };
 
   useEffect(() => {
@@ -445,8 +428,7 @@ const ConnectionsPage = () => {
       closeForm();
       setTimeout(() => setSuccessMsg(''), 3000);
       
-      // Uncomment below for real API call
-      /*
+      // Real API call
       const method = isEdit ? 'PUT' : 'POST';
       const url = isEdit ? `/api/connections/${editId}` : '/api/connections';
       const requestData = {
@@ -454,17 +436,16 @@ const ConnectionsPage = () => {
         ConnectionDate: formattedDate,
       };
 
-      const res = await fetch(url, {
-        method,
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(requestData),
-      });
-      if (!res.ok) throw new Error('Failed to save connection');
+      if (isEdit) {
+        await api.put(url, requestData);
+      } else {
+        await api.post(url, requestData);
+      }
+      
       closeForm();
       fetchConnections();
       setSuccessMsg(isEdit ? 'Connection updated successfully!' : 'Connection added successfully!');
       setTimeout(() => setSuccessMsg(''), 3000);
-      */
     } catch (err) {
       alert(err.message);
     } finally {
@@ -488,14 +469,11 @@ const ConnectionsPage = () => {
       setSuccessMsg('Connection deleted successfully!');
       setTimeout(() => setSuccessMsg(''), 3000);
       
-      // Uncomment below for real API call
-      /*
-      const res = await fetch(`/api/connections/${id}`, { method: 'DELETE' });
-      if (!res.ok) throw new Error('Failed to delete connection');
+      // Real API call
+      await api.delete(`/api/connections/${id}`);
       fetchConnections();
       setSuccessMsg('Connection deleted successfully!');
       setTimeout(() => setSuccessMsg(''), 3000);
-      */
     } catch (err) {
       alert(err.message);
     }
@@ -522,7 +500,7 @@ const ConnectionsPage = () => {
     try {
       await Promise.all(
         selectedConnections.map(connectionId => 
-          fetch(`/api/connections/${connectionId}`, { method: 'DELETE' })
+          api.delete(`/api/connections/${connectionId}`)
         )
       );
       fetchConnections();
