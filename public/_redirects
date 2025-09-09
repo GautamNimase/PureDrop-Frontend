@@ -1,0 +1,5 @@
+# API routes
+/api/* https://puredrop-backend.onrender.com/api/:splat 200
+
+# SPA fallback
+/* /index.html 200
