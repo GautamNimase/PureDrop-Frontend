@@ -3,7 +3,7 @@ import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-d
 import { AuthProvider } from './context/AuthContext';
 import { DataProvider } from './context/DataContext';
 import Login from './pages/Login';
-import AdminDashboard from './pages/AdminDashboard';
+import AdminRouter from './components/admin/AdminRouter';
 import UserDashboard from './pages/UserDashboard';
 import ProtectedRoute from './components/ProtectedRoute';
 import SignUp from './pages/SignUp';
@@ -18,10 +18,10 @@ function App() {
               <Route path="/login" element={<Login />} />
               <Route path="/signup" element={<SignUp />} />
               <Route 
-                path="/admin*" 
+                path="/admin/*" 
                 element={
                   <ProtectedRoute requireAdmin>
-                    <AdminDashboard />
+                    <AdminRouter />
                   </ProtectedRoute>
                 } 
               />

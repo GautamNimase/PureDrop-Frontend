@@ -229,9 +229,9 @@ const CustomersPage = () => {
               </tr>
             </thead>
             <tbody>
-              {customers.map((customer) => (
-                <tr key={customer.CustomerID}>
-                  <td className="border px-4 py-2">{customer.CustomerID}</td>
+              {customers.map((customer, index) => (
+                <tr key={customer.CustomerID || customer._id}>
+                  <td className="border px-4 py-2">{index + 1}</td>
                   <td className="border px-4 py-2">{customer.Name}</td>
                   <td className="border px-4 py-2">{customer.Address}</td>
                   <td className="border px-4 py-2">{customer.Phone}</td>

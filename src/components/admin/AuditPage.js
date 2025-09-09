@@ -68,9 +68,9 @@ const AuditPage = () => {
                   <td colSpan={5} className="text-center text-gray-500 py-4">No logs found.</td>
                 </tr>
               ) : (
-                filteredLogs.map(log => (
-                  <tr key={log.LogID}>
-                    <td className="border px-4 py-2">{log.LogID}</td>
+                filteredLogs.map((log, index) => (
+                  <tr key={log.LogID || log._id}>
+                    <td className="border px-4 py-2">{index + 1}</td>
                     <td className="border px-4 py-2">{log.User}</td>
                     <td className="border px-4 py-2">{log.Action}</td>
                     <td className="border px-4 py-2">{log.Timestamp}</td>

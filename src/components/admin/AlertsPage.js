@@ -1,4 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
+import { formatDate } from '../../utils/dateFormatter';
 
 const initialFormState = { Type: '', Message: '', Status: 'Active' };
 
@@ -235,9 +236,9 @@ const AlertsPage = () => {
                   <td colSpan={6} className="text-center text-gray-500 py-4">No alerts found.</td>
                 </tr>
               ) : (
-                filteredAlerts.map(alert => (
-                  <tr key={alert.AlertID}>
-                    <td className="border px-4 py-2">{alert.AlertID}</td>
+                filteredAlerts.map((alert, index) => (
+                  <tr key={alert.AlertID || alert._id}>
+                    <td className="border px-4 py-2">{index + 1}</td>
                     <td className="border px-4 py-2">{alert.Type}</td>
                     <td className="border px-4 py-2">{alert.Message}</td>
                     <td className="border px-4 py-2">
@@ -258,7 +259,7 @@ const AlertsPage = () => {
                         </span>
                       )}
                     </td>
-                    <td className="border px-4 py-2">{alert.Timestamp}</td>
+                    <td className="border px-4 py-2">{formatDate(alert.Timestamp)}</td>
                     <td className="border px-4 py-2">
                       {editingStatusId === alert.AlertID ? (
                         <>

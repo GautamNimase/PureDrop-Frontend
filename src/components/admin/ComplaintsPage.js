@@ -228,9 +228,9 @@ const ComplaintsPage = () => {
                 <tr>
                   <td colSpan={8} className="text-center text-gray-400 py-8">No complaints found.</td>
                 </tr>
-              ) : complaints.map(complaint => (
-                <tr key={complaint.ComplaintID}>
-                  <td className="border px-4 py-2">{complaint.ComplaintID}</td>
+              ) : complaints.map((complaint, index) => (
+                <tr key={complaint.ComplaintID || complaint._id}>
+                  <td className="border px-4 py-2">{index + 1}</td>
                   <td className="border px-4 py-2">{complaint.UserID}</td>
                   <td className="border px-4 py-2">{complaint.Date}</td>
                   <td className="border px-4 py-2">{complaint.Type}</td>

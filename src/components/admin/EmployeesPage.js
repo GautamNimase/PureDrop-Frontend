@@ -198,9 +198,9 @@ const EmployeesPage = () => {
               </tr>
             </thead>
             <tbody>
-              {employees.map(emp => (
-                <tr key={emp.EmployeeID}>
-                  <td className="border px-4 py-2">{emp.EmployeeID}</td>
+              {employees.map((emp, index) => (
+                <tr key={emp.EmployeeID || emp._id}>
+                  <td className="border px-4 py-2">{index + 1}</td>
                   <td className="border px-4 py-2">{emp.Name}</td>
                   <td className="border px-4 py-2">{emp.Role}</td>
                   <td className="border px-4 py-2">{emp.Contact}</td>

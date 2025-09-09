@@ -1,4 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
+import { formatDate } from '../../utils/dateFormatter';
 
 const initialFormState = { SourceID: '', Date: '', pH: '', Contaminants: '' };
 
@@ -147,11 +148,11 @@ const QualityPage = () => {
             </tr>
           </thead>
           <tbody>
-            {quality.map(q => (
-              <tr key={q.QualityID}>
-                <td className="border px-4 py-2">{q.QualityID}</td>
+            {quality.map((q, index) => (
+              <tr key={q.QualityID || q._id}>
+                <td className="border px-4 py-2">{index + 1}</td>
                 <td className="border px-4 py-2">{q.SourceID}</td>
-                <td className="border px-4 py-2">{q.Date}</td>
+                <td className="border px-4 py-2">{formatDate(q.Date)}</td>
                 <td className="border px-4 py-2">{q.pH}</td>
                 <td className="border px-4 py-2">{q.Contaminants}</td>
                 <td className="border px-4 py-2 flex gap-2 justify-center items-center">
